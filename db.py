@@ -1,7 +1,8 @@
 import sqlite3
 import os
 import datetime
-from typing import Any, Optional
+import textwrap
+from typing import Any
 
 
 async def initialization_db(user_id: str) -> str:
@@ -41,7 +42,7 @@ async def initialization_db(user_id: str) -> str:
 
 async def execute_db_operations(user_id: str,
                                 sql_query: str,
-                                params: tuple = ()) -> Optional[Any]:
+                                params: tuple = ()) -> str | list[Any]:
     db_path = f"./db/{user_id}_db.sqlite"
     result = None
 
@@ -89,15 +90,43 @@ async def add_note(user_id: str, note: str) -> str:
     return result
 
 
-async def update_note(user_id: str, note: str, new_note: str) -> str:
-    pass
+async def update_note(user_id: str, note_id: str, new_note_text: str) -> str:
+    from bot import logger
+
+    query = "UPDATE Notes SET Note = (?) WHERE ID = (?)"
+    params = (new_note_text, note_id)
+
+    try:
+        result = await execute_db_operations(
+            user_id=user_id, sql_query=query, params=params
+        )
+    except RuntimeError as e:
+        logger.error("Error while updating note for user {user_id}: {str(e)}")
+        return f"An error occurred while updating note: {str(e)}"
+
+    return result
 
 
 async def delete_note(user_id: str, note: str) -> str:
-    pass
+    from bot import logger
+
+    delete_query = "DELETE FROM Notes WHERE ID = (?)"
+    params = (note.strip(),)
+
+    try:
+        result = await execute_db_operations(
+            user_id, sql_query=delete_query, params=params
+        )
+    except RuntimeError as e:
+        logger.error((f"Error while delete note for user {user_id}: {str(e)}"))
+        return f"An error occurred while deleting note: {str(e)}"
+
+    return result
 
 
 async def reset_db(user_id: str) -> str:
+    from bot import logger
+
     delete_query = "DELETE FROM Notes;"
     reset_query = "DELETE FROM sqlite_sequence WHERE name='Notes';"
 
@@ -108,13 +137,13 @@ async def reset_db(user_id: str) -> str:
         reset_query = await execute_db_operations(
             user_id=user_id, sql_query=reset_query
         )
-
         return "The database has been reset successfully!"
     except RuntimeError as e:
-        return f"An error occurred while fetching notes: {str(e)}"
+        logger.error(f"Error reseting database for user {user_id}: {str(e)}")
+        return f"An error occurred while reset database: {str(e)}"
 
 
-async def get_notes(user_id: str) -> str:
+async def get_notes(user_id: str, raw: bool = None) -> str:
     from bot import logger
 
     query = "SELECT * FROM Notes"
@@ -124,16 +153,25 @@ async def get_notes(user_id: str) -> str:
             user_id=user_id, sql_query=query
         )
         if not result:
-            return "You don't have any notes yet"
+            return "You don't have any notes yet."
 
     except RuntimeError as e:
         logger.error(f"Error fetching notes for user {user_id}: {str(e)}")
         return f"An error occurred while fetching notes: {str(e)}"
 
-    note_list = ''
-    for i, row in enumerate(result):
-        note_list += ' '.join(str(j) for j in row)
-        if i < len(result) - 1:
-            note_list += '\n'
+    if raw:
+        return [raw for raw in result]
+    else:
+        note_list = await to_format_note_list(result)
+        return note_list
 
-    return note_list
+
+async def to_format_note_list(result) -> str:
+    note_width = 40
+    formatted_notes = []
+
+    for row in result:
+        wrapped_note = textwrap.fill(row[1], note_width)
+        formatted_notes.append(f"{row[0]}. {wrapped_note} - {row[2]}")
+
+    return "\n".join(formatted_notes)

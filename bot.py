@@ -8,17 +8,16 @@ from telegram.ext import (ApplicationBuilder,
 from dotenv import load_dotenv
 from os import getenv
 
-from db import initialization_db, add_note, get_notes, reset_db
-from loger import loger_init
-from state_constant import ADD_NOTE
+from db import initialization_db, add_note, get_notes, reset_db, delete_note, update_note
+from logger import logger_init
+from state_constant import ADD_NOTE, DELETE_NOTE, UPDATE_NOTE_ID, UPDATE_NOTE_TEXT
 
 # Инициализация логгера
-logger = loger_init()
+logger = logger_init()
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-
     logger.info(f"User {user_id} started bot")
 
     welcome_msg = """
@@ -38,7 +37,7 @@ Please note: This bot is not designed to store sensitive information, such as pa
         logger.info(f"Database initialized successfully for User {user_id}")
     except RuntimeError as e:
         logger.error(f"Error initializing db for User {user_id}: {e}")
-        db_msg = "Failed to initialize the database. Please try again later"
+        db_msg = "Failed to initialize the database. Please try again later."
 
     await context.bot.send_message(
         chat_id=update.effective_chat.id,
@@ -60,7 +59,7 @@ Bot accepts the following commands:
 /notes - To get a list of notes
 /reset - To clear database
 
-Please remember: Do not store sensitive information (e.g., passwords, private data) in this bot's database
+Please remember: Do not store sensitive information (e.g., passwords, private data) in this bot's database.
 """
     await context.bot.send_message(
         chat_id=update.effective_chat.id,
@@ -78,16 +77,16 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 
-async def note(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def enter_add_note(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.info("Entering note state")
     await update.message.reply_text(
-        "Please send the text of the note or type /cancel to reverse the action"
+        "Please send the text of the note or type /cancel to reverse the action."
     )
     return ADD_NOTE
 
 
 async def recieve_note(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    logger.info("Wait for user note")
+    logger.info("Wait for user note to add")
 
     user_note = update.message.text.strip()
     user_id = update.effective_user.id
@@ -110,28 +109,136 @@ async def recieve_note(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 
-async def update(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    pass
+async def enter_update_note_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    logger.info("Entering update state")
+
+    await update.message.reply_text(
+        text="Please send the ID of the note you want to update, or type /cancel to reverse the action."
+    )
+
+    return UPDATE_NOTE_ID
 
 
-async def delete(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    pass
+async def enter_update_note_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    logger.info("Entering update-note state")
+
+    await update.message.reply_text(
+        text="Please send the new text for the note, or type /cancel to reverse the action."
+    )
+
+    return UPDATE_NOTE_TEXT
+
+
+async def recieve_update_note_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    logger.info("Waiting for user note number for update")
+    user_note_number = update.message.text.strip()
+    user_id = update.effective_user.id
+
+    try:
+        note_id = int(user_note_number)
+    except ValueError:
+        logger.info("The user entered an invalid ID format")
+        msg = "The entered ID is not valid. Please enter a number."
+        await update.message.reply_text(msg)
+        return ConversationHandler.END
+
+    notes = await get_notes(user_id=user_id, raw=True)
+    ids = [str(note[0]) for note in notes]
+
+    if str(note_id) not in ids:
+        logger.info(f"User {user_id} entered a non-existent ID: {note_id}")
+        msg = "This note ID does not exist."
+        await update.message.reply_text(msg)
+        return ConversationHandler.END
+
+    context.user_data["note_id"] = note_id
+    await recieve_update_note_text(update, context)
+
+    return UPDATE_NOTE_TEXT
+
+
+async def recieve_update_note_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    logger.info("Waiting user to get new note text")
+
+    note_text = update.message.text.strip()
+    user_id = update.effective_user.id
+    note_id = context.user_data.get("note_id")
+
+    if not note_text:
+        logger.info("The user entered empty note text")
+        msg = "The note text cannot be empty."
+        await update.message.reply_text(msg)
+        return ConversationHandler.END
+
+    result = await update_note(user_id=user_id, note_id=note_id, new_note_text=note_text)
+    await context.bot.send_message(
+        chat_id=update.effective_chat.id,
+        text=result
+    )
+
+    return ConversationHandler.END
+
+
+async def enter_delete_note_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    logger.info("Entering delete state")
+
+    await update.message.reply_text(
+        text="Please send the number of the note or type /cancel to reverse the action."
+    )
+
+    return DELETE_NOTE
+
+
+async def recieve_delete_note(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    logger.info("Waiting for user note number for delete")
+
+    user_note_number = update.message.text.strip()
+    user_id = update.effective_user.id
+
+    try:
+        note_id = int(user_note_number)
+    except ValueError:
+        logger.info("The user entered an invalid ID format")
+        msg = "The entered ID is not valid. Please enter a number."
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text=msg
+        )
+        return ConversationHandler.END
+
+    notes = await get_notes(user_id, raw=True)
+    ids = [str(note[0]) for note in notes]
+
+    if user_note_number not in ids:
+        logger.info(f"User {user_id} entered a non-existent ID: {note_id}")
+        msg = "This note ID does not exist."
+    else:
+        msg = await delete_note(user_id=user_id, note=user_note_number)
+
+    await context.bot.send_message(
+        chat_id=update.effective_chat.id,
+        text=msg
+    )
+
+    logger.info(
+        f"Note deletion processed for user {user_id}, note ID: {note_id}")
+    return ConversationHandler.END
 
 
 async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     logger.info(f"User {user_id} invoked the /reset command")
 
-    result = await reset_db(user_id=user_id)
+    msg = await reset_db(user_id=user_id)
     await context.bot.send_message(
         chat_id=update.effective_chat.id,
-        text=result
+        text=msg
     )
 
     logger.info(f"Reset command successfully processed for User {user_id}")
 
 
-async def notes(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def note_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     logger.info(f"User {user_id} invoked the /notes command")
 
@@ -181,7 +288,7 @@ if __name__ == "__main__":
     TELEGRAM_TOKEN = getenv("TELEGRAM-TOKEN")
 
     if not TELEGRAM_TOKEN:
-        print("Token is not found!")
+        logger.info("Token is not found!")
         exit()
 
     application = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
@@ -190,7 +297,7 @@ if __name__ == "__main__":
     help_handler = CommandHandler("help", help)
 
     add_note_handler = ConversationHandler(
-        entry_points=[CommandHandler("add_note", note)],
+        entry_points=[CommandHandler("add_note", enter_add_note)],
         states={
             ADD_NOTE: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, recieve_note),
@@ -200,10 +307,37 @@ if __name__ == "__main__":
         fallbacks=[CommandHandler("cancel", cancel)],
     )
 
-    update_handler = CommandHandler("update", update)
-    delete_handler = CommandHandler("delete_note", delete)
+    update_note_handler = ConversationHandler(
+        entry_points=[CommandHandler("update", enter_update_note_id)],
+        states={
+            UPDATE_NOTE_ID: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND,
+                               recieve_update_note_id),
+                CommandHandler("cancel", cancel)
+            ],
+            UPDATE_NOTE_TEXT: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND,
+                               recieve_update_note_text),
+                CommandHandler("cancel", cancel)
+            ]
+        },
+        fallbacks=[CommandHandler("cancel", cancel)]
+    )
+
+    delete_note_handler = ConversationHandler(
+        entry_points=[CommandHandler("delete", enter_delete_note_id)],
+        states={
+            DELETE_NOTE: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND,
+                               recieve_delete_note),
+                CommandHandler("cancel", cancel)
+            ]
+        },
+        fallbacks=[CommandHandler("cancel", cancel)]
+    )
+
     reset_handler = CommandHandler("reset", reset)
-    notes_hadler = CommandHandler("notes", notes)
+    notes_hadler = CommandHandler("notes", note_list)
     message_handler = MessageHandler(filters.TEXT & ~filters.COMMAND, message)
     unknown_handler = MessageHandler(filters.COMMAND, unknown)
 
@@ -212,8 +346,8 @@ if __name__ == "__main__":
             start_handler,
             help_handler,
             add_note_handler,
-            update_handler,
-            delete_handler,
+            update_note_handler,
+            delete_note_handler,
             reset_handler,
             notes_hadler,
             message_handler,
