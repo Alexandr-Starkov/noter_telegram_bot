@@ -97,14 +97,13 @@ async def update_note(user_id: str, note_id: str, new_note_text: str) -> str:
     params = (new_note_text, note_id)
 
     try:
-        result = await execute_db_operations(
+        await execute_db_operations(
             user_id=user_id, sql_query=query, params=params
         )
+        return "Note successfully update"
     except RuntimeError as e:
         logger.error("Error while updating note for user {user_id}: {str(e)}")
         return f"An error occurred while updating note: {str(e)}"
-
-    return result
 
 
 async def delete_note(user_id: str, note: str) -> str:

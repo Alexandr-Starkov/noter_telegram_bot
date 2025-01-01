@@ -1,16 +1,14 @@
 from telegram import Update
-from telegram.ext import (ApplicationBuilder,
-                          MessageHandler,
-                          CommandHandler,
-                          ContextTypes,
-                          ConversationHandler,
-                          filters)
 from dotenv import load_dotenv
 from os import getenv
+from telegram.ext import ApplicationBuilder, ContextTypes, ConversationHandler
 
-from db import initialization_db, add_note, get_notes, reset_db, delete_note, update_note
-from logger import logger_init
-from state_constant import ADD_NOTE, DELETE_NOTE, UPDATE_NOTE_ID, UPDATE_NOTE_TEXT
+from db import (initialization_db, add_note, get_notes,
+                      reset_db, delete_note, update_note)
+from handlers.handlers import get_handlers
+from utils.logger import logger_init
+from handlers.state_constant import ADD_NOTE, DELETE_NOTE, UPDATE_NOTE_ID, UPDATE_NOTE_TEXT
+
 
 # Инициализация логгера
 logger = logger_init()
@@ -56,7 +54,7 @@ Bot accepts the following commands:
 /add_note - To add note to database
 /update - To update note in database
 /delete - To delete note in database
-/notes - To get a list of notes
+/list - To get a list of notes
 /reset - To clear database
 
 Please remember: Do not store sensitive information (e.g., passwords, private data) in this bot's database.
@@ -152,8 +150,7 @@ async def recieve_update_note_id(update: Update, context: ContextTypes.DEFAULT_T
         return ConversationHandler.END
 
     context.user_data["note_id"] = note_id
-    await recieve_update_note_text(update, context)
-
+    await update.message.reply_text("Please send the new text for your note")
     return UPDATE_NOTE_TEXT
 
 
@@ -240,7 +237,7 @@ async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def note_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    logger.info(f"User {user_id} invoked the /notes command")
+    logger.info(f"User {user_id} invoked the /list command")
 
     note_list = await get_notes(user_id=user_id)
 
@@ -249,7 +246,7 @@ async def note_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text=note_list
     )
 
-    logger.info(f"Notes command successfully processed for User {user_id}")
+    logger.info(f"List command successfully processed for User {user_id}")
 
 
 async def message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -293,66 +290,7 @@ if __name__ == "__main__":
 
     application = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
 
-    start_handler = CommandHandler("start", start)
-    help_handler = CommandHandler("help", help)
-
-    add_note_handler = ConversationHandler(
-        entry_points=[CommandHandler("add_note", enter_add_note)],
-        states={
-            ADD_NOTE: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, recieve_note),
-                CommandHandler("cancel", cancel)
-            ]
-        },
-        fallbacks=[CommandHandler("cancel", cancel)],
-    )
-
-    update_note_handler = ConversationHandler(
-        entry_points=[CommandHandler("update", enter_update_note_id)],
-        states={
-            UPDATE_NOTE_ID: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND,
-                               recieve_update_note_id),
-                CommandHandler("cancel", cancel)
-            ],
-            UPDATE_NOTE_TEXT: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND,
-                               recieve_update_note_text),
-                CommandHandler("cancel", cancel)
-            ]
-        },
-        fallbacks=[CommandHandler("cancel", cancel)]
-    )
-
-    delete_note_handler = ConversationHandler(
-        entry_points=[CommandHandler("delete", enter_delete_note_id)],
-        states={
-            DELETE_NOTE: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND,
-                               recieve_delete_note),
-                CommandHandler("cancel", cancel)
-            ]
-        },
-        fallbacks=[CommandHandler("cancel", cancel)]
-    )
-
-    reset_handler = CommandHandler("reset", reset)
-    notes_hadler = CommandHandler("notes", note_list)
-    message_handler = MessageHandler(filters.TEXT & ~filters.COMMAND, message)
-    unknown_handler = MessageHandler(filters.COMMAND, unknown)
-
-    application.add_handlers(
-        (
-            start_handler,
-            help_handler,
-            add_note_handler,
-            update_note_handler,
-            delete_note_handler,
-            reset_handler,
-            notes_hadler,
-            message_handler,
-            unknown_handler,
-        )
-    )
+    handlers = get_handlers()
+    application.add_handlers(handlers)
 
     application.run_polling()
